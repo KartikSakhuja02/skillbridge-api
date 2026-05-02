@@ -1,0 +1,12 @@
+Full Name: Kartik Sakhuja
+Email: kartik.sakhuja2004@gmail.com
+Phone: 9325180298
+GitHub Profile: https://github.com/KartikSakhuja02
+API Github Link: https://github.com/KartikSakhuja02/skillbridge-api
+Most Challenging Part: The challenging parts during the build was the Windows-to-Linux 
+environment mismatch during deployment, the PYTHONPATH had to be set manually every session 
+locally, another challenge was the __init__.py files got corrupted with UTF-16 encoding, 
+and bcrypt 5.0.0 on Render's Python 3.14 environment broke password verification in ways 
+that only appeared in production logs, not locally. These three things were the most 
+challenging parts during the build, but with the help me prompt engineering i was able to 
+fix them.
