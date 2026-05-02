@@ -1,263 +1,261 @@
-# SkillBridge API — Attendance Management System
+# SkillBridge API
 
-## Task 1: Data Model & Core API
+Hey, welcome to the team! This is the SkillBridge API, a FastAPI backend for managing attendance in a fictional state-level skilling programme. It handles 5 user roles: student, trainer, institution, programme_manager, and monitoring_officer. Built with FastAPI, PostgreSQL on Neon, and deployed on Render.
 
-### Overview
+## 1. Live API
 
-SkillBridge is a REST API backend for an attendance management system supporting a government skilling programme. The system enforces role-based access control (RBAC) across five user types:
+**Base URL:** https://skillbridge-api-lu20.onrender.com  
+**Docs URL:** https://skillbridge-api-lu20.onrender.com/docs  
 
-1. Student: Join batches, view own attendance
-2. Trainer: Create sessions, mark attendance, manage batches
-3. Institution: Create and manage batches, view batch summaries
-4. Programme Manager: View institution and programme-wide summaries
-5. Monitoring Officer: Read-only access to all attendance data via scoped JWT
+Note: Render free tier sleeps after inactivity — first request takes 30-60 seconds.
 
-#### Key Design Principles
-1. Role-based access control (RBAC): Every protected endpoint validates user role from JWT  
-2. JWT-based authentication: Stateless, scalable token validation  
-3. Relational data modeling: Normalized schema supporting many-to-many relationships  
-4. Secure by default: No frontend-based access control; all validation server-side
+## 2. Local Setup from Scratch
 
----
+Assuming you only have Python and pip installed:
 
-## Data Model
+```bash
+# Clone the repo
+git clone https://github.com/KartikSakhuja02/skillbridge-api.git
+cd skillbridge-api
 
-### 1. Users
-What it does: Stores all system users across roles with authentication credentials.
+# Create and activate virtualenv
+python -m venv venv
+venv\Scripts\activate  # Windows
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | Integer | Primary key |
-| `name` | String(255) | Full name |
-| `email` | String(255) | Unique, indexed |
-| `hashed_password` | String(255) | Bcrypt hash |
-| `role` | Enum | `student` \| `trainer` \| `institution` \| `programme_manager` \| `monitoring_officer` |
-| `institution_id` | Integer (FK, nullable) | References `users.id` for trainers/staff under an institution |
-| `created_at` | DateTime | Timestamp (UTC) |
+# Install dependencies
+pip install -r requirements.txt
 
-Constraints: `UNIQUE(email)`, `PK(id)`
+# Copy .env.example to .env and fill in DATABASE_URL and SECRET_KEY
+cp .env.example .env
+# Generate SECRET_KEY with: python -c "import secrets; print(secrets.token_hex(32))"
 
-### 2. Batches
-What it does: Represents training batches organized by institutions.
+# Start server
+uvicorn src.main:app --reload  # Must set PYTHONPATH=. on Windows
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | Integer | Primary key |
-| `name` | String(255) | Batch name (e.g., "Python Basics") |
-| `institution_id` | Integer (FK) | References `users.id` (institution role) |
-| `created_at` | DateTime | Timestamp (UTC) |
+# Seed database (separate terminal)
+python src/seed.py
 
-Constraints: `PK(id)`, `FK(institution_id → users.id)`
-
-### 3. Batch Trainers (Many-to-Many)
-What it does: Maps trainers to batches, enabling multiple trainers per batch.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | Integer | Primary key |
-| `batch_id` | Integer (FK) | References `batches.id` |
-| `trainer_id` | Integer (FK) | References `users.id` (trainer role) |
-
-Constraints: `PK(id)`, `UNIQUE(batch_id, trainer_id)`, `FK(batch_id)`, `FK(trainer_id)`
-
-### 4. Batch Students (Many-to-Many)
-What it does: Maps students to batches for enrollment tracking.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | Integer | Primary key |
-| `batch_id` | Integer (FK) | References `batches.id` |
-| `student_id` | Integer (FK) | References `users.id` (student role) |
-
-Constraints: `PK(id)`, `UNIQUE(batch_id, student_id)`, `FK(batch_id)`, `FK(student_id)`
-
-### 5. Batch Invites
-What it does: Controlled onboarding mechanism for students to join batches via secure tokens.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | Integer | Primary key |
-| `batch_id` | Integer (FK) | References `batches.id` |
-| `email` | String(255) | Invite recipient email |
-| `token` | String(255) | Unique, secure invite token |
-| `status` | String(50) | `pending` \| `used` |
-| `created_at` | DateTime | Timestamp (UTC) |
-| `expires_at` | DateTime (nullable) | Optional expiration |
-
-Constraints: `PK(id)`, `UNIQUE(token)`, `FK(batch_id)`, `INDEX(email, token)`
-
-### 6. Sessions
-What it does: Represents individual training sessions within a batch.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | Integer | Primary key |
-| `batch_id` | Integer (FK) | References `batches.id` |
-| `trainer_id` | Integer (FK) | References `users.id` (trainer role) |
-| `title` | String(255) | Session title (e.g., "Intro to Python") |
-| `date` | Date | Session date |
-| `start_time` | Time | Session start (e.g., 09:00) |
-| `end_time` | Time | Session end (e.g., 11:00) |
-| `created_at` | DateTime | Timestamp (UTC) |
-
-Constraints: `PK(id)`, `FK(batch_id)`, `FK(trainer_id)`
-
-### 7. Attendance
-What it does: Tracks per-student attendance for each session.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | Integer | Primary key |
-| `session_id` | Integer (FK) | References `sessions.id` |
-| `student_id` | Integer (FK) | References `users.id` (student role) |
-| `status` | Enum | `present` \| `absent` \| `late` |
-| `marked_at` | DateTime | Timestamp when marked (UTC) |
-Constraints: `PK(id)`, `UNIQUE(session_id, student_id)`, `FK(session_id)`, `FK(student_id)`
-
-The database was implemented on Neon PostgreSQL.
-
----
-
-## API Endpoints
-
-### Authentication
-
-| Method | Path | Description | Auth | Returns |
-|--------|------|-------------|------|---------|
-| `POST` | `/auth/signup` | Register new user | None | JWT token |
-| `POST` | `/auth/login` | Login with credentials | None | JWT token |
-| `POST` | `/auth/monitoring-token` | Generate scoped monitoring token (1h) | API key | JWT token (1h expiry) |
-
-#### Request/Response Examples
-
-**POST /auth/signup**
-```json
-Request:
-{
-  "name": "Kartik Trainer",
-  "email": "kartiktrainer@example.com",
-  "password": "kartiktrainer123",
-  "role": "trainer"
-} //example for signup
-
-Response (201):
-{
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "token_type": "bearer"
-} //response you get after the signup
+# Run tests
+python -m pytest tests/ -v
 ```
 
-**POST /auth/login**
-```json
-Request:
-{
-  "email": "kartiktrainer@example.com",
-  "password": "kartiktrainer123"
-} //example for the login of the above sign up
+## 3. Test Accounts
 
-Response (200):
-{
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "token_type": "bearer"
-} //response you get after logging in
+All passwords: `password123`
+
+- Institution: alpha@inst.com, beta@inst.com
+- Trainer: trainer1@sb.com, trainer2@sb.com, trainer3@sb.com, trainer4@sb.com
+- Student: student1@sb.com through student15@sb.com
+- Programme Manager: pm@sb.com
+- Monitoring Officer: monitor@sb.com
+
+## 4. Sample curl Commands
+
+All commands use curl.exe syntax for Windows PowerShell. Replace `<token>` with actual JWT.
+
+### POST /auth/signup
+```powershell
+curl.exe -X POST https://skillbridge-api-lu20.onrender.com/auth/signup `
+  -H "Content-Type: application/json" `
+  -d '{"name": "New User", "email": "new@test.com", "password": "pass123", "role": "student"}'
 ```
 
-### Batch Management
+### POST /auth/login
+```powershell
+curl.exe -X POST https://skillbridge-api-lu20.onrender.com/auth/login `
+  -H "Content-Type: application/json" `
+  -d '{"email": "trainer1@sb.com", "password": "password123"}'
+```
 
-| Method | Path | Allowed Roles | Description |
-|--------|------|---------------|-------------|
-| `POST` | `/batches` | Trainer, Institution | Create new batch |
-| `GET` | `/batches/{id}/summary` | Any authenticated | Get batch summary (trainers, students, session count) |
-| `POST` | `/batches/{id}/invite` | Trainer, Institution | Generate invite link for student |
-| `POST` | `/batches/join` | Student | Join batch using invite token |
+### POST /auth/monitoring-token
+```powershell
+curl.exe -X POST https://skillbridge-api-lu20.onrender.com/auth/monitoring-token `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer <standard_token>" `
+  -d '{"key": "skillbridge-monitoring-secret-key-2024"}'
+```
 
-### Session Management
+### POST /batches/
+```powershell
+curl.exe -X POST https://skillbridge-api-lu20.onrender.com/batches/ `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer <token>" `
+  -d '{"name": "New Batch"}'
+```
 
-| Method | Path | Allowed Roles | Description |
-|--------|------|---------------|-------------|
-| `POST` | `/sessions` | Trainer | Create session |
-| `GET` | `/sessions/{id}/attendance` | Trainer, Monitoring Officer | Get session attendance list |
+### POST /batches/{id}/invite
+```powershell
+curl.exe -X POST https://skillbridge-api-lu20.onrender.com/batches/1/invite `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer <token>" `
+  -d '{"email": "student1@sb.com"}'
+```
 
-### Attendance
+### POST /batches/join
+```powershell
+curl.exe -X POST https://skillbridge-api-lu20.onrender.com/batches/join `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer <token>" `
+  -d '{"token": "<invite_token>"}'
+```
 
-| Method | Path | Allowed Roles | Description |
-|--------|------|---------------|-------------|
-| `POST` | `/attendance/mark` | Trainer | Mark student attendance for session |
+### POST /sessions/
+```powershell
+curl.exe -X POST https://skillbridge-api-lu20.onrender.com/sessions/ `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer <token>" `
+  -d '{"batch_id": 1, "title": "Intro to Python", "date": "2024-06-01", "start_time": "09:00:00", "end_time": "11:00:00"}'
+```
 
-### Reports & Summaries
+### POST /attendance/mark
+```powershell
+curl.exe -X POST https://skillbridge-api-lu20.onrender.com/attendance/mark `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer <token>" `
+  -d '{"session_id": 1, "student_id": 1, "status": "present"}'
+```
 
-| Method | Path | Allowed Roles | Description |
-|--------|------|---------------|-------------|
-| `GET` | `/batches/{id}/summary` | Any authenticated | Batch summary |
-| `GET` | `/institutions/{id}/summary` | Programme Manager, Monitoring Officer | Institution summary |
-| `GET` | `/programme/summary` | Programme Manager, Monitoring Officer | Programme-wide summary |
-| `GET` | `/monitoring/attendance` | Monitoring Officer | All attendance records (read-only) |
+### GET /sessions/{id}/attendance
+```powershell
+curl.exe -X GET https://skillbridge-api-lu20.onrender.com/sessions/1/attendance `
+  -H "Authorization: Bearer <token>"
+```
+
+### GET /batches/{id}/summary
+```powershell
+curl.exe -X GET https://skillbridge-api-lu20.onrender.com/batches/1/summary `
+  -H "Authorization: Bearer <token>"
+```
+
+### GET /institutions/{id}/summary
+```powershell
+curl.exe -X GET https://skillbridge-api-lu20.onrender.com/institutions/1/summary `
+  -H "Authorization: Bearer <token>"
+```
+
+### GET /programme/summary
+```powershell
+curl.exe -X GET https://skillbridge-api-lu20.onrender.com/programme/summary `
+  -H "Authorization: Bearer <token>"
+```
+
+### GET /monitoring/attendance
+
+**Full 3-step flow for Monitoring Officer:**
+
+**Step 1: Login to get standard token**
+```powershell
+curl.exe -X POST https://skillbridge-api-lu20.onrender.com/auth/login `
+  -H "Content-Type: application/json" `
+  -d '{"email": "monitor@sb.com", "password": "password123"}'
+```
+
+**Step 2: Exchange for scoped monitoring token**
+```powershell
+curl.exe -X POST https://skillbridge-api-lu20.onrender.com/auth/monitoring-token `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer <standard_token>" `
+  -d '{"key": "skillbridge-monitoring-secret-key-2024"}'
+```
+
+**Step 3: Use scoped token on monitoring endpoint**
+```powershell
+curl.exe -X GET https://skillbridge-api-lu20.onrender.com/monitoring/attendance `
+  -H "Authorization: Bearer <scoped_token>"
+```
+
+## 5. Schema Decisions
+
+### batch_trainers
+Many-to-many join table between batches and trainers. A batch can have multiple trainers and a trainer can belong to multiple batches. Uses a unique constraint on (batch_id, trainer_id) to prevent duplicates. Reflects real-world co-trainer arrangements.
+
+### batch_invites
+Trainers generate a cryptographically random token via `secrets.token_urlsafe(32)`. Token is single-use (marked "used" after consumption) with an expiry timestamp. Prevents unauthorised enrollment — students need the token to join, not just the batch ID.
+
+### Dual-token for Monitoring Officer
+Standard 24-hour JWT on login like all other roles. To access /monitoring/attendance, they must exchange it for a short-lived 1-hour scoped token by also providing a hardcoded API key. The scoped token has `token_type: "monitoring"` which is checked on every request. Standard tokens are rejected on the monitoring endpoint. Monitoring tokens are rejected everywhere else.
+
+JWT payload structures:
+
+**Standard token (24 hours):**
+```json
+{
+  "user_id": 1,
+  "role": "trainer",
+  "token_type": "access",
+  "iat": 1704067200,
+  "exp": 1704153600
+}
+```
+
+**Monitoring scoped token (1 hour):**
+```json
+{
+  "user_id": 21,
+  "role": "monitoring_officer",
+  "token_type": "monitoring",
+  "iat": 1704067200,
+  "exp": 1704070800
+}
+```
+
+Token revocation in production: store JTI in Redis blocklist on logout, use short expiry + refresh tokens, rotate monitoring API key via environment variable with grace period.
+
+Security issue: static API key with no rate limiting on /auth/monitoring-token. Fix: rate limit to 5 attempts per hour per user_id, hash the API key in the database.
+
+## 6. What is Working / Partial / Skipped
+
+### Fully Working
+- All 13 endpoints implemented and tested
+- Role-based access control enforced server-side on every endpoint
+- JWT auth with correct payload fields
+- Dual-token monitoring officer flow end to end
+- 7 pytest tests passing (5 required + 2 bonus)
+- Seed script: 2 institutions, 4 trainers, 15 students, 3 batches, 8 sessions, 40 attendance records
+- Deployed live on Render with Neon PostgreSQL
+
+### Partially Done
+- Invite tokens don't validate that only the invited email can use them — any student with the token can join
+- batch_invites.used implemented as a status string ("pending"/"used") instead of boolean — functionally equivalent
+
+### Skipped
+- Pagination on /monitoring/attendance
+- Refresh token flow — tokens can't be refreshed, only re-issued via login
+
+## 7. One Thing I'd Do Differently
+
+Set up Docker from the start. Managing PYTHONPATH, virtual environments, and Python version differences between Windows local and Linux on Render caused the most debugging time. A Dockerfile would eliminate all of that — same environment everywhere, reproducible builds, no "works on my machine" issues.
+
+Deployment notes: Deployed on Render free tier web service. Database on Neon managed PostgreSQL (ap-southeast-1 region). All environment variables in Render dashboard — nothing committed to repo. Python version pinned to 3.11 via .python-version file (SQLAlchemy 2.0 incompatible with Python 3.14 which Render uses by default). bcrypt pinned to 4.0.1 in requirements.txt (bcrypt 5.0.0 broke password verification). PYTHONPATH=. set in Render start command.
+  not just the invited email address)
+- The `batch_invites.used` field is implemented as a `status` string
+  ("pending"/"used") instead of a boolean as specified — functionally equivalent
+
+## What I Skipped
+
+- Pagination on `/monitoring/attendance` (returns all records)
+- Refresh token flow (tokens cannot be refreshed, only re-issued via login)
 
 ---
 
-## 🔒 Access Control
+## One Thing I'd Do Differently
 
-### Authentication Flow
+I would set up the project with Docker from the start. Managing `PYTHONPATH`,
+virtual environments, and Python version differences between Windows (local)
+and Linux (Render) caused the most debugging time. A `Dockerfile` would
+eliminate all of that — same environment everywhere, reproducible builds,
+and easier CI/CD.
 
-1. User calls `POST /auth/login` or `POST /auth/signup` with credentials
-2. Server returns JWT containing: `user_id`, `role`, `iat`, `exp`
-3. Client includes token in `Authorization: Bearer <token>` header
-4. Protected endpoints extract and validate token
-5. If token invalid/expired or role not permitted → 401 Unauthorized or 403 Forbidden
+Now commit and push it:
+powershellgit add README.md
+git commit -m "Add complete README covering all 5 tasks"
+git push origin main
+Then verify your live API works with this quick test in PowerShell:
+powershellcurl -X POST https://skillbridge-api-lu20.onrender.com/auth/login `
+  -H "Content-Type: application/json" `
+  -d '{"email": "trainer1@sb.com", "password": "password123"}'
+If you get a token back, Task 4 and Task 5 are both done! 🎉
 
-### Error Responses
-
-| Status | Scenario |
-|--------|----------|
-| `400` | Duplicate email, missing required fields |
-| `401` | Missing/invalid token |
-| `403` | User role not permitted |
-| `404` | Resource not found |
-| `422` | Validation error |
-
-### Role Permissions
-
-All role-based access is enforced server-side via `Depends(require_role(...))` decorator on every protected endpoint. No frontend-based authorization.
-
----
-
-## 🌱 Seed Data (Seeding Script)
-
-Command: `python -m src.seed`
-
-### Test Accounts (password: `password123`)
-
-1. Institutions: `alpha@inst.com`, `beta@inst.com`
-2. Trainers: `trainer1@sb.com` through `trainer4@sb.com`
-3. Students: `student1@sb.com` through `student15@sb.com`
-4. Management: `pm@sb.com` (Programme Manager), `monitor@sb.com` (Monitoring Officer)
-
-### Data Created
-
-| Entity | Count |
-|--------|-------|
-| Users | 23 |
-| Institutions | 2 |
-| Trainers | 4 |
-| Students | 15 |
-| Batches | 3 |
-| Sessions | 8 |
-| Attendance Records | 40 |
-
----
-
-## Key Design Decisions
-
-### 1. Many-to-Many for Batch Trainers
-1. Multiple trainers per batch  
-2. Flexible scheduling and load balancing
-
-### 2. Token-Based Batch Joining
-1. Secure invite mechanism  
-2. Optional expiration support  
-3. One-time usage tracking
-
-### 3. Attendance Decoupled from Sessions
 1. Flexible status tracking  
 2. Easy aggregation for reports  
 3. Async marking support
