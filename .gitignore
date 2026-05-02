@@ -1,0 +1,46 @@
+.env
+.env.*
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.sqlite3
+*.db
+*.log
+*/.vscode/
+.vscode/
+*.egg-info/
+dist/
+build/
+coverage/
+htmlcov/
+*.egg
+*.manifest
+*.spec
+.Python
+env/
+venv/
+ENV/
+.venv/
+node_modules/
+coverage.xml
+*.log
+.DS_Store
+.idea/
+*.iml
+*.swp
+
+# macOS
+.DS_Store
+
+# VS Code settings
+.vscode/
+
+# Python virtual environment
+.venv/
+
+# dotenv files
+.env
+
+# Test artifacts
+.pytest_cache/
